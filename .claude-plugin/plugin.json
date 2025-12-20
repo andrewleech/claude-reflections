@@ -1,0 +1,8 @@
+{
+  "name": "claude-reflections",
+  "version": "0.1.0",
+  "description": "Minimal conversation memory with vector search and Agent SDK retrieval",
+  "author": "corona",
+  "mcpServers": "../.mcp.json",
+  "settings": "../.claude/settings.json"
+}

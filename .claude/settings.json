@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/stop-index.sh\"",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/debug-stop-hook.sh\"",
             "timeout": 60
           }
         ]

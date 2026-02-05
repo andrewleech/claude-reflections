@@ -12,32 +12,85 @@ Search past conversations to answer: $ARGUMENTS
 
 ## Environment
 
-- Plugin: ~/.claude/plugins/local-marketplace/plugins/claude-reflections
-- Project name: convert working directory to project name by stripping leading `/`, replacing `/` with `-`, prepending `-`
-  - Example: /home/corona/foo → -home-corona-foo
+- Plugin directory: `~/.claude/plugins/local-marketplace/plugins/claude-reflections`
+- Project name formula: strip leading `/`, replace `/` with `-`, prepend `-`
+  - Example: `/home/corona/foo` → `-home-corona-foo`
 
 ## Workflow
 
-1. Check Qdrant is running:
+1. **Check installation:**
    ```bash
-   docker ps | grep claude-reflections-qdrant
+   docker ps --format '{{.Names}}' | grep claude-reflections-qdrant
    ```
-   If not running, report "reflections not installed - run install.sh in the plugin directory" and stop.
+   If container not running, tell the user: "The reflections system is not installed. See the installation guide at `~/.claude/plugins/local-marketplace/plugins/claude-reflections/.claude/skills/reflections/install.md` or run `./install.sh` in the plugin directory."
 
-2. Search conversations (auto-indexes the project first):
+2. **Search conversations:**
    ```bash
    cd ~/.claude/plugins/local-marketplace/plugins/claude-reflections
    uv run claude-reflections search "SEARCH_TERMS" --project="PROJECT_NAME" --limit 5
    ```
-   Extract search terms from the user's question. Use the project name derived from the working directory.
+   - Extract search terms from the user's question
+   - Derive project name from the working directory
+   - Search auto-indexes the project incrementally before searching
 
-3. For each search result, use Read to examine the JSONL file at the returned line number (±10 lines for context).
+3. **Read matched conversations:**
+   For each search result, use Read to examine the JSONL file at the returned line number (±10 lines for context).
 
-   JSONL format:
-   - `type`: "user" or "assistant"
-   - `timestamp`: ISO format
-   - `message.content`: the text content
+4. **Synthesize answer:**
+   Extract relevant information and provide a clear answer. Cite conversation dates if helpful.
 
-4. Synthesize an answer from the conversation content. Cite timestamps or conversation dates if relevant.
+## CLI Reference
 
-If no relevant results found, report that clearly.
+All commands run from the plugin directory.
+
+```bash
+PLUGIN_DIR=~/.claude/plugins/local-marketplace/plugins/claude-reflections
+cd "$PLUGIN_DIR"
+
+# List all indexed projects
+uv run claude-reflections list
+
+# Check indexing status for a project
+uv run claude-reflections status --project="-home-corona-foo"
+
+# Search (auto-indexes when --project specified)
+uv run claude-reflections search "query terms" --project="-home-corona-foo" --limit 5
+
+# Manual full reindex
+uv run claude-reflections index --project="-home-corona-foo" --full --verbose
+```
+
+### Search Output Format
+
+```
+1. [assistant] Score: 0.892
+   Project: -home-corona-foo
+   File: /home/corona/.claude/projects/-home-corona-foo/abc123.jsonl
+   Line: 45
+   Time: 2025-01-04T10:30:00+00:00
+   Preview: We implemented authentication using...
+```
+
+## JSONL Format
+
+Conversation files at `~/.claude/projects/<project>/*.jsonl` contain one JSON object per line:
+
+```json
+{"type":"user","timestamp":"2025-01-04T10:30:00Z","message":{"role":"user","content":"How do we handle auth?"}}
+{"type":"assistant","timestamp":"2025-01-04T10:30:15Z","message":{"role":"assistant","content":[{"type":"text","text":"We use JWT..."}]}}
+```
+
+- `type`: "user" or "assistant"
+- `timestamp`: ISO format
+- `message.content`: text (user) or array of blocks (assistant)
+
+## Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| Qdrant not running | `docker start claude-reflections-qdrant` or run install.sh |
+| No search results | Check project is indexed: `uv run claude-reflections list` |
+| Wrong project name | Verify with `pwd \| sed 's\|^/\|-\|' \| tr '/' '-'` |
+| CLI errors | See [install.md](install.md) for full troubleshooting |
+
+For installation or configuration issues, direct the user to [install.md](install.md).

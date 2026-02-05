@@ -39,6 +39,9 @@ find_free_port() {
     return 1
 }
 
+# Create config directory early (before Docker volume mount to avoid root ownership)
+mkdir -p "$CONFIG_DIR"
+
 # Check if container already exists
 if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
     echo "Qdrant container '${CONTAINER_NAME}' already exists."
@@ -56,6 +59,11 @@ if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
         if [ -f "$CONFIG_FILE" ]; then
             QDRANT_PORT=$(jq -r '.qdrant_port' "$CONFIG_FILE" 2>/dev/null || grep -o '"qdrant_port":[^,}]*' "$CONFIG_FILE" | cut -d: -f2 | tr -d ' ')
         fi
+    fi
+    # Fallback: if config file missing but container exists, get port from Docker
+    if [ -z "$QDRANT_PORT" ]; then
+        QDRANT_PORT=$(docker port "$CONTAINER_NAME" 6333 2>/dev/null | cut -d: -f2)
+        echo "Retrieved port ${QDRANT_PORT} from Docker"
     fi
 else
     # Find a free port and start new container
@@ -79,9 +87,6 @@ else
         sleep 1
     done
 fi
-
-# Create config directory
-mkdir -p "$CONFIG_DIR"
 
 # Write config file
 cat > "$CONFIG_FILE" << EOF

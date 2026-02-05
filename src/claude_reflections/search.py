@@ -7,6 +7,7 @@ from typing import Any
 
 from fastembed import TextEmbedding
 from qdrant_client import QdrantClient
+from qdrant_client.http.exceptions import UnexpectedResponse
 from qdrant_client.models import Distance, PointStruct, VectorParams
 
 from .config import get_qdrant_url
@@ -153,17 +154,17 @@ class QdrantManager:
         # Generate query embedding
         query_embedding = EmbeddingManager.embed(query)
 
-        # Search
-        results = self.client.search(
+        # Search using new query_points API
+        response = self.client.query_points(
             collection_name=self.collection_name,
-            query_vector=query_embedding,
+            query=query_embedding,
             limit=limit,
             score_threshold=score_threshold,
         )
 
         # Convert to SearchResult
         search_results: list[SearchResult] = []
-        for hit in results:
+        for hit in response.points:
             payload: dict[str, Any] = hit.payload or {}
             search_results.append(
                 SearchResult(
@@ -186,14 +187,13 @@ class QdrantManager:
             info = self.client.get_collection(self.collection_name)
             return {
                 "collection": self.collection_name,
-                "points_count": info.points_count,
-                "vectors_count": info.vectors_count,
-                "status": info.status.value,
+                "points_count": info.points_count or 0,
+                "status": str(info.status),
             }
-        except Exception:
+        except UnexpectedResponse:
+            # Collection doesn't exist
             return {
                 "collection": self.collection_name,
                 "points_count": 0,
-                "vectors_count": 0,
                 "status": "not_found",
             }

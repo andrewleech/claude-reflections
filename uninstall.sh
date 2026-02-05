@@ -13,10 +13,12 @@ if [ -f "$CONFIG_FILE" ]; then
     CONTAINER_NAME=$(jq -r '.qdrant_container // "claude-reflections-qdrant"' "$CONFIG_FILE")
 fi
 
-# Remove Claude plugin
-if command -v claude &> /dev/null; then
-    echo "Removing Claude plugin..."
-    claude plugin remove claude-reflections --scope user 2>/dev/null || true
+# Remove plugin symlink from local marketplace
+MARKETPLACE_DIR="${HOME}/.claude/plugins/local-marketplace"
+if [ -L "${MARKETPLACE_DIR}/plugins/claude-reflections" ]; then
+    echo "Removing plugin symlink from marketplace..."
+    rm "${MARKETPLACE_DIR}/plugins/claude-reflections"
+    echo "Plugin removed from marketplace."
 fi
 
 # Stop and remove Qdrant container
@@ -46,5 +48,7 @@ fi
 echo ""
 echo "Uninstall complete."
 echo ""
-echo "Note: The embedding model cache in ~/.cache/fastembed was not removed."
-echo "To remove it manually: rm -rf ~/.cache/fastembed"
+echo "To complete removal:"
+echo "  1. Restart Claude Code to unload the plugin"
+echo "  2. Optionally remove embedding model cache: rm -rf ~/.cache/fastembed"
+echo "  3. Optionally clean marketplace entry from ~/.claude/settings.json"

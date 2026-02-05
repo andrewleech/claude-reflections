@@ -76,6 +76,34 @@ def cmd_search(args: argparse.Namespace) -> int:
     """Search indexed conversations."""
     state_mgr = StateManager()
 
+    # Auto-index before search only when a specific project is provided
+    # Indexing all projects on every search is too slow
+    if args.project:
+        project_path = get_project_path(args.project)
+        if project_path.exists():
+            jsonl_files = discover_jsonl_files(project_path)
+            if jsonl_files:
+                try:
+                    state = state_mgr.load(args.project)
+                    qdrant = QdrantManager(state.collection_name)
+
+                    # Run incremental indexing silently
+                    for jsonl_file in jsonl_files:
+                        filename = jsonl_file.name
+                        start_offset = state_mgr.get_file_offset(args.project, filename)
+                        messages = list(iter_new_messages(jsonl_file, start_offset))
+
+                        if messages:
+                            qdrant.index_messages(messages)
+                            final_offset = get_final_offset(jsonl_file)
+                            state_mgr.update_file_state(
+                                args.project, filename, final_offset, len(messages)
+                            )
+                except Exception as e:
+                    print(f"Warning: Auto-indexing failed for {args.project}: {e}")
+                    print("Proceeding with search using existing index...")
+
+    # Now perform the search
     projects = [args.project] if args.project else state_mgr.list_projects()
 
     if not projects:
@@ -130,7 +158,13 @@ def cmd_status(args: argparse.Namespace) -> int:
         qdrant = QdrantManager(state.collection_name)
         qdrant_stats = qdrant.get_collection_stats()
 
+        # Get project directory info
+        project_path = get_project_path(project)
+        jsonl_files = discover_jsonl_files(project_path) if project_path.exists() else []
+
         print(f"Project: {project}")
+        print(f"  Directory: {project_path}")
+        print(f"  JSONL files: {len(jsonl_files)}")
         print(f"  Collection: {stats['collection_name']}")
         print(f"  Files tracked: {stats['files_tracked']}")
         print(f"  Total indexed: {stats['total_indexed']}")

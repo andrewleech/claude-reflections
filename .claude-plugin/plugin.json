@@ -1,9 +1,9 @@
 {
   "name": "claude-reflections",
-  "version": "0.1.0",
-  "description": "Minimal conversation memory with vector search and Agent SDK retrieval",
+  "version": "0.2.0",
+  "description": "Minimal conversation memory with vector search",
   "author": {
     "name": "corona"
   },
-  "mcpServers": "./../.mcp.json"
+  "skills": ["./.claude/skills/reflections"]
 }

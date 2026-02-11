@@ -18,13 +18,7 @@ Search past conversations to answer: $ARGUMENTS
 
 ## Workflow
 
-1. **Check installation:**
-   ```bash
-   docker ps --format '{{.Names}}' | grep claude-reflections-qdrant
-   ```
-   If container not running, tell the user: "The reflections system is not installed. See the installation guide at `~/.claude/plugins/local-marketplace/plugins/claude-reflections/.claude/skills/reflections/install.md` or run `./install.sh` in the plugin directory."
-
-2. **Search conversations:**
+1. **Search conversations:**
    ```bash
    cd ~/.claude/plugins/local-marketplace/plugins/claude-reflections
    uv run claude-reflections search "SEARCH_TERMS" --project="PROJECT_NAME" --limit 5
@@ -32,11 +26,12 @@ Search past conversations to answer: $ARGUMENTS
    - Extract search terms from the user's question
    - Derive project name from the working directory
    - Search auto-indexes the project incrementally before searching
+   - **On failure**: if the command exits non-zero with a "Could not connect to Qdrant" error, tell the user: "The reflections system appears to be down. Run `./install.sh` in `~/.claude/plugins/local-marketplace/plugins/claude-reflections` or see [install.md](install.md) for troubleshooting."
 
-3. **Read matched conversations:**
+2. **Read matched conversations:**
    For each search result, use Read to examine the JSONL file at the returned line number (±10 lines for context).
 
-4. **Synthesize answer:**
+3. **Synthesize answer:**
    Extract relevant information and provide a clear answer. Cite conversation dates if helpful.
 
 ## CLI Reference

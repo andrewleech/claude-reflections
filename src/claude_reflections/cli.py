@@ -5,6 +5,10 @@ from __future__ import annotations
 import argparse
 import sys
 
+import httpx
+from qdrant_client.http.exceptions import ResponseHandlingException
+
+from .config import get_qdrant_url
 from .indexer import (
     discover_jsonl_files,
     get_final_offset,
@@ -112,13 +116,20 @@ def cmd_search(args: argparse.Namespace) -> int:
 
     all_results = []
 
-    for project in projects:
-        state = state_mgr.load(project)
-        qdrant = QdrantManager(state.collection_name)
-        results = qdrant.search(args.query, limit=args.limit)
+    try:
+        for project in projects:
+            state = state_mgr.load(project)
+            qdrant = QdrantManager(state.collection_name)
+            results = qdrant.search(args.query, limit=args.limit)
 
-        for r in results:
-            all_results.append((project, r))
+            for r in results:
+                all_results.append((project, r))
+    except (httpx.ConnectError, ResponseHandlingException, ConnectionError, OSError) as e:
+        qdrant_url = get_qdrant_url()
+        print(f"Error: Could not connect to Qdrant at {qdrant_url}. "
+              "Is the Qdrant container running?")
+        print(f"  Detail: {e}")
+        return 1
 
     # Sort by score
     all_results.sort(key=lambda x: x[1].score, reverse=True)

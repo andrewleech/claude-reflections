@@ -5,10 +5,6 @@ from __future__ import annotations
 import argparse
 import sys
 
-import httpx
-from qdrant_client.http.exceptions import ResponseHandlingException
-
-from .config import get_qdrant_url
 from .indexer import (
     discover_jsonl_files,
     get_final_offset,
@@ -16,7 +12,7 @@ from .indexer import (
     iter_new_messages,
     list_all_projects,
 )
-from .search import QdrantManager
+from .search import SqliteVecManager
 from .state import StateManager
 
 
@@ -33,7 +29,6 @@ def cmd_index(args: argparse.Namespace) -> int:
     total_indexed = 0
 
     for project in projects:
-        state = state_mgr.load(project)
         project_path = get_project_path(project)
 
         if not project_path.exists():
@@ -44,7 +39,14 @@ def cmd_index(args: argparse.Namespace) -> int:
         if not jsonl_files:
             continue
 
-        qdrant = QdrantManager(state.collection_name)
+        manager = SqliteVecManager(state_mgr.get_db_path(project))
+
+        if args.full:
+            manager.drop_collection()
+            state = state_mgr.load(project)
+            state.files.clear()
+            state_mgr.save(project, state)
+
         project_indexed = 0
 
         for jsonl_file in jsonl_files:
@@ -57,8 +59,8 @@ def cmd_index(args: argparse.Namespace) -> int:
             messages = list(iter_new_messages(jsonl_file, start_offset))
 
             if messages:
-                # Index to Qdrant
-                count = qdrant.index_messages(messages)
+                # Index to sqlite-vec
+                count = manager.index_messages(messages)
                 project_indexed += count
                 total_indexed += count
 
@@ -68,6 +70,8 @@ def cmd_index(args: argparse.Namespace) -> int:
 
                 if args.verbose:
                     print(f"  Indexed {count} messages from {filename}")
+
+        manager.close()
 
         if project_indexed > 0:
             print(f"Indexed {project_indexed} messages in {project}")
@@ -88,8 +92,7 @@ def cmd_search(args: argparse.Namespace) -> int:
             jsonl_files = discover_jsonl_files(project_path)
             if jsonl_files:
                 try:
-                    state = state_mgr.load(args.project)
-                    qdrant = QdrantManager(state.collection_name)
+                    manager = SqliteVecManager(state_mgr.get_db_path(args.project))
 
                     # Run incremental indexing silently
                     for jsonl_file in jsonl_files:
@@ -98,11 +101,13 @@ def cmd_search(args: argparse.Namespace) -> int:
                         messages = list(iter_new_messages(jsonl_file, start_offset))
 
                         if messages:
-                            qdrant.index_messages(messages)
+                            manager.index_messages(messages)
                             final_offset = get_final_offset(jsonl_file)
                             state_mgr.update_file_state(
                                 args.project, filename, final_offset, len(messages)
                             )
+
+                    manager.close()
                 except Exception as e:
                     print(f"Warning: Auto-indexing failed for {args.project}: {e}")
                     print("Proceeding with search using existing index...")
@@ -116,20 +121,13 @@ def cmd_search(args: argparse.Namespace) -> int:
 
     all_results = []
 
-    try:
-        for project in projects:
-            state = state_mgr.load(project)
-            qdrant = QdrantManager(state.collection_name)
-            results = qdrant.search(args.query, limit=args.limit)
+    for project in projects:
+        manager = SqliteVecManager(state_mgr.get_db_path(project))
+        results = manager.search(args.query, limit=args.limit)
+        manager.close()
 
-            for r in results:
-                all_results.append((project, r))
-    except (httpx.ConnectError, ResponseHandlingException, ConnectionError, OSError) as e:
-        qdrant_url = get_qdrant_url()
-        print(f"Error: Could not connect to Qdrant at {qdrant_url}. "
-              "Is the Qdrant container running?")
-        print(f"  Detail: {e}")
-        return 1
+        for r in results:
+            all_results.append((project, r))
 
     # Sort by score
     all_results.sort(key=lambda x: x[1].score, reverse=True)
@@ -165,9 +163,10 @@ def cmd_status(args: argparse.Namespace) -> int:
     print("Indexing Status:\n")
     for project in projects:
         stats = state_mgr.get_stats(project)
-        state = state_mgr.load(project)
-        qdrant = QdrantManager(state.collection_name)
-        qdrant_stats = qdrant.get_collection_stats()
+
+        manager = SqliteVecManager(state_mgr.get_db_path(project))
+        db_stats = manager.get_collection_stats()
+        manager.close()
 
         # Get project directory info
         project_path = get_project_path(project)
@@ -176,11 +175,10 @@ def cmd_status(args: argparse.Namespace) -> int:
         print(f"Project: {project}")
         print(f"  Directory: {project_path}")
         print(f"  JSONL files: {len(jsonl_files)}")
-        print(f"  Collection: {stats['collection_name']}")
         print(f"  Files tracked: {stats['files_tracked']}")
         print(f"  Total indexed: {stats['total_indexed']}")
-        print(f"  Qdrant points: {qdrant_stats['points_count']}")
-        print(f"  Qdrant status: {qdrant_stats['status']}")
+        print(f"  Indexed points: {db_stats['points_count']}")
+        print(f"  DB status: {db_stats['status']}")
         print()
 
     return 0

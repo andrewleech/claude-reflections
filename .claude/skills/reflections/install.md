@@ -1,10 +1,9 @@
 # Installation Guide
 
-Complete installation instructions for the claude-reflections conversation memory system.
+Installation instructions for the claude-reflections conversation memory system.
 
 ## Prerequisites
 
-- Docker (for Qdrant vector database)
 - Python >=3.11
 - uv (Python package manager)
 
@@ -20,12 +19,12 @@ cd "$PLUGIN_DIR"
 ```
 
 This will:
-1. Start Qdrant v1.16 in Docker on a random available port (16333-26333)
-2. Create configuration file at `~/.claude/reflections/config.json` with the chosen port
-3. Install Python dependencies
-4. Download embedding model (`sentence-transformers/all-MiniLM-L6-v2`)
-5. Create plugin symlink in local marketplace
-6. Create skill files in `.claude/skills/reflections/`
+1. Install Python dependencies
+2. Download embedding model (`sentence-transformers/all-MiniLM-L6-v2`)
+3. Create plugin symlink in local marketplace
+4. Write configuration to `~/.claude/reflections/config.json`
+
+Vector databases are created automatically per-project on first use at `~/.claude/reflections/<project>/vectors.db`.
 
 **After installation, restart Claude Code** to load the plugin and skill.
 
@@ -33,41 +32,7 @@ This will:
 
 If you prefer to install manually or the script fails:
 
-### 1. Start Qdrant Container
-
-```bash
-# Choose any available port (e.g., 16333, or check with: ss -tuln | grep :16333)
-QDRANT_PORT=16333
-
-# Start Qdrant v1.16 (pinned for API compatibility)
-docker run -d --name claude-reflections-qdrant \
-  -p ${QDRANT_PORT}:6333 \
-  -v ~/.claude/reflections/qdrant_storage:/qdrant/storage \
-  qdrant/qdrant:v1.16
-
-# Wait for Qdrant to be ready
-sleep 5
-curl -s http://localhost:${QDRANT_PORT}/healthz || echo "Qdrant not ready yet"
-```
-
-### 2. Create Configuration File
-
-```bash
-mkdir -p ~/.claude/reflections
-
-# Use the same port as above
-QDRANT_PORT=16333
-
-cat > ~/.claude/reflections/config.json << EOF
-{
-  "qdrant_port": ${QDRANT_PORT},
-  "qdrant_host": "localhost",
-  "qdrant_container": "claude-reflections-qdrant"
-}
-EOF
-```
-
-### 3. Install Python Dependencies
+### 1. Install Python Dependencies
 
 ```bash
 # Replace with your actual plugin location if different
@@ -76,7 +41,7 @@ cd "$PLUGIN_DIR"
 uv sync
 ```
 
-### 4. Download Embedding Model
+### 2. Download Embedding Model
 
 ```bash
 # Pre-download the embedding model to avoid first-use delay
@@ -88,7 +53,18 @@ print('Embedding model downloaded')
 "
 ```
 
-### 5. Create Plugin Marketplace Structure
+### 3. Create Configuration
+
+```bash
+mkdir -p ~/.claude/reflections
+cat > ~/.claude/reflections/config.json << 'EOF'
+{
+  "version": 2
+}
+EOF
+```
+
+### 4. Create Plugin Marketplace Structure
 
 ```bash
 # Create local marketplace
@@ -118,7 +94,7 @@ ln -sf "${PLUGIN_DIR}" \
   ~/.claude/plugins/local-marketplace/plugins/claude-reflections
 ```
 
-### 6. Register Marketplace in Claude Code Settings
+### 5. Register Marketplace in Claude Code Settings
 
 Add to `~/.claude/settings.json`:
 
@@ -156,7 +132,7 @@ jq --arg mp_path "$MARKETPLACE_DIR" '. + {
 mv ~/.claude/settings.json.tmp ~/.claude/settings.json
 ```
 
-### 7. Restart Claude Code
+### 6. Restart Claude Code
 
 Exit and restart Claude Code for the plugin to load.
 
@@ -172,15 +148,7 @@ After installation:
    - In Claude Code, type: "What skills are available?"
    - Should see: `reflections` skill listed
 
-3. **Check Qdrant is running:**
-   ```bash
-   docker ps | grep claude-reflections-qdrant
-   # Check port from config file
-   QDRANT_PORT=$(jq -r '.qdrant_port' ~/.claude/reflections/config.json)
-   curl -s http://localhost:${QDRANT_PORT}/healthz
-   ```
-
-4. **Test CLI commands:**
+3. **Test CLI commands:**
    ```bash
    PLUGIN_DIR="${HOME}/.claude/plugins/local-marketplace/plugins/claude-reflections"
    cd "$PLUGIN_DIR" && uv run claude-reflections list
@@ -204,26 +172,9 @@ cd "$PLUGIN_DIR" && uv run claude-reflections search "test query" --project="$PR
 
 ## Configuration
 
-### Qdrant Connection
-
-Configuration is stored in `~/.claude/reflections/config.json`:
-
-```json
-{
-  "qdrant_port": 16333,
-  "qdrant_host": "localhost",
-  "qdrant_container": "claude-reflections-qdrant"
-}
-```
-
-Override with environment variable:
-```bash
-export QDRANT_URL="http://localhost:16333"
-```
-
 ### State Directory
 
-By default, state files are stored in `~/.claude/reflections/`.
+By default, state files and vector databases are stored in `~/.claude/reflections/`.
 
 Override with environment variable:
 ```bash
@@ -240,12 +191,11 @@ To change, modify `EMBEDDING_MODEL` and `EMBEDDING_DIM` in `src/claude_reflectio
 
 | Issue | Check | Solution |
 |-------|-------|----------|
-| Qdrant not running | `docker ps \| grep qdrant` | `docker start claude-reflections-qdrant` or re-run install.sh |
-| Wrong port | `cat ~/.claude/reflections/config.json` | Update port or restart Qdrant on correct port |
 | CLI not found | `which uv` | Install uv: `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
 | Plugin not loading | Check `~/.claude/settings.json` | Ensure enabledPlugins and extraKnownMarketplaces are set |
 | Skill not appearing | Restart Claude Code | Plugin must be loaded first |
 | Empty search results | Check if indexed | `uv run claude-reflections list` |
+| Database error | Corrupt vectors.db | Delete `~/.claude/reflections/<project>/vectors.db` and reindex |
 | Permission denied | Check file ownership | `sudo chown -R $(whoami) ~/.claude/reflections` |
 
 ## Uninstallation
@@ -259,7 +209,6 @@ cd "$PLUGIN_DIR"
 ```
 
 This will:
-- Stop and remove Qdrant container
 - Remove plugin symlink
 - Optionally remove data directory (`~/.claude/reflections/`)
 

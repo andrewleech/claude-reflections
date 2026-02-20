@@ -3,19 +3,16 @@
 ## Overview
 
 Minimal conversation memory system for Claude Code:
-- **Single dependency**: Qdrant only (no batch services, no background daemons)
+- **Zero infrastructure**: sqlite-vec embedded database (no Docker, no external services)
 - **Pointer-based storage**: Vectors reference file:line, not duplicated content
 - **Skill-based retrieval**: Reflections skill reads original JSONL files when you ask about past conversations
-- **Per-project isolation**: Separate collections and state per project
+- **Per-project isolation**: Separate databases and state per project
 - **Auto-indexing**: Search command automatically indexes before searching (incremental)
 
 ## Version Requirements
 
-- **Qdrant Server**: v1.16.x (Docker image: `qdrant/qdrant:v1.16`)
-- **qdrant-client**: ~=1.16.0 (Python client library)
+- **sqlite-vec**: >=0.1.6 (embedded vector search)
 - **Python**: >=3.11
-
-These versions are pinned for API compatibility. The v1.16 API introduced `query_points()` replacing the older `search()` method.
 
 ## Architecture
 
@@ -28,9 +25,9 @@ These versions are pinned for API compatibility. The v1.16 API introduced `query
                                                           │
                                                           ▼
                                                  ┌─────────────────┐
-                                                 │     Qdrant      │
-                                                 │  (vectors +     │
-                                                 │  file:line refs)│
+                                                 │   sqlite-vec    │
+                                                 │  (vectors.db    │
+                                                 │  per project)   │
                                                  └─────────────────┘
 
 Workflow:
@@ -51,12 +48,13 @@ cd /path/to/claude-reflections
 ```
 
 This will:
-- Start Qdrant v1.16 in Docker on a random available port
+- Install Python dependencies and pre-download the embedding model
 - Save config to `~/.claude/reflections/config.json`
-- Pre-download the embedding model
 - Create local marketplace at `~/.claude/plugins/local-marketplace`
 - Symlink plugin into marketplace structure
 - Update `~/.claude/settings.json` with plugin configuration
+
+Vector databases are created automatically per-project on first use.
 
 **After installation, restart Claude Code and verify:**
 - Ask: "What skills are available?" → should show `reflections`
@@ -69,11 +67,9 @@ This will:
 
 ### Manual Install (if needed)
 ```bash
-# Start Qdrant manually (v1.16 pinned for API compatibility)
-docker run -d --name claude-reflections-qdrant \
-  -p 6333:6333 \
-  -v ~/.claude/reflections/qdrant_storage:/qdrant/storage \
-  qdrant/qdrant:v1.16
+# Install dependencies
+cd /path/to/claude-reflections
+uv sync
 
 # Create local marketplace structure
 mkdir -p ~/.claude/plugins/local-marketplace/.claude-plugin
@@ -126,7 +122,7 @@ For complete skill documentation, see [`.claude/skills/reflections/SKILL.md`](.c
 | `.claude/skills/reflections/install.md` | Installation reference documentation |
 | `src/claude_reflections/cli.py` | CLI commands (index, search, status, list) |
 | `src/claude_reflections/indexer.py` | JSONL parser, byte offset tracking |
-| `src/claude_reflections/search.py` | FastEmbed embeddings, Qdrant operations |
+| `src/claude_reflections/search.py` | FastEmbed embeddings, sqlite-vec operations |
 | `src/claude_reflections/state.py` | Per-project state management |
 | `src/claude_reflections/config.py` | Configuration file management |
 
@@ -136,12 +132,12 @@ For complete skill documentation, see [`.claude/skills/reflections/SKILL.md`](.c
 1. Glob `~/.claude/projects/*/*.jsonl`
 2. Parse each line → extract user/assistant text (skip thinking, tool_use)
 3. Generate 384d embeddings (FastEmbed, all-MiniLM-L6-v2)
-4. Store in Qdrant with payload: `{file_path, line_number, role, snippet, timestamp}`
+4. Store in sqlite-vec with metadata: `{file_path, line_number, role, snippet, timestamp}`
 5. Track byte offset in `~/.claude/reflections/<project>/state.json`
 
 ### Search (via CLI)
 1. Run incremental indexing first (auto-index)
-2. Embed query → vector similarity search in Qdrant
+2. Embed query → cosine similarity search in sqlite-vec
 3. Return `{file_path, line_number, score, snippet}` for each match
 
 ### Skill Workflow
@@ -155,20 +151,21 @@ For complete skill documentation, see [`.claude/skills/reflections/SKILL.md`](.c
 
 ```
 ~/.claude/reflections/
-├── config.json         # {qdrant_port, qdrant_host, qdrant_container}
-├── qdrant_storage/     # Qdrant persistent storage (Docker volume)
+├── config.json         # {"version": 2}
 ├── my-project/
-│   └── state.json      # {files: {name: {offset, count}}, collection_name}
+│   ├── state.json      # {files: {name: {offset, count}}, collection_name}
+│   └── vectors.db      # sqlite-vec database
 └── other-project/
-    └── state.json
+    ├── state.json
+    └── vectors.db
 ```
 
 ## Development
 
 ### Run Tests
 ```bash
-uv run pytest -v                    # All tests
-uv run pytest -v -m "not integration"  # Skip Qdrant-dependent tests
+uv run python -m pytest -v                    # All tests
+uv run python -m pytest -v -m "not e2e"       # Skip e2e tests
 ```
 
 ### Lint & Format
@@ -187,11 +184,9 @@ uv run mypy src/
 
 | Symptom | Check | Fix |
 |---------|-------|-----|
-| No search results | `docker ps \| grep claude-reflections-qdrant` | Run `./install.sh` |
-| Wrong Qdrant port | `cat ~/.claude/reflections/config.json` | Re-run `./install.sh` |
+| No search results | `claude-reflections list` | Run `claude-reflections index --full` |
 | Empty index | `claude-reflections status` | `claude-reflections index --full` |
-| "Collection not found" | Project never indexed | `claude-reflections index -p project-name` |
-| API errors (search/query) | Qdrant version mismatch | Ensure Qdrant v1.16 and qdrant-client ~=1.16.0 |
+| Database error | Corrupt vectors.db | Delete `~/.claude/reflections/<project>/vectors.db` and reindex |
 | Skill not available | Plugin not loaded | Add `"claude-reflections@local": true` to enabledPlugins in settings.json |
 | "Plugin not found in marketplace" | Wrong marketplace source path | Verify `source.path` in extraKnownMarketplaces points to marketplace root |
 | Invalid settings error | Wrong marketplace source format | Use `{"source": "directory", "path": "..."}` not `"source": "directory"` |
@@ -202,14 +197,11 @@ uv run mypy src/
 `~/.claude/reflections/config.json` (created by install.sh):
 ```json
 {
-  "qdrant_port": 16789,
-  "qdrant_host": "localhost",
-  "qdrant_container": "claude-reflections-qdrant"
+  "version": 2
 }
 ```
 
-### Environment Variables (override config file)
-- `QDRANT_URL` - Qdrant endpoint (overrides config file if set)
+### Environment Variables
 - `REFLECTIONS_STATE_DIR` - State directory (default: `~/.claude/reflections`)
 
 ### Embedding Model
@@ -221,7 +213,7 @@ To change, modify `EMBEDDING_MODEL` and `EMBEDDING_DIM` in `search.py`.
 
 | Aspect | claude-self-reflect | claude-reflections |
 |--------|---------------------|-------------------|
-| Services | Qdrant + batch-watcher + batch-monitor | Qdrant only |
+| Services | Qdrant + batch-watcher + batch-monitor | None (embedded sqlite-vec) |
 | Storage | Full narratives in Qdrant | Pointers to JSONL |
 | Indexing | Background Docker services | CLI with auto-indexing |
 | Retrieval | Direct payload | Skill reads files |
@@ -230,8 +222,8 @@ To change, modify `EMBEDDING_MODEL` and `EMBEDDING_DIM` in `search.py`.
 
 ## Plugin Files
 
-- `install.sh` - Automated install (Qdrant, embedding model, plugin)
-- `uninstall.sh` - Remove plugin and Qdrant container
+- `install.sh` - Automated install (embedding model, plugin)
+- `uninstall.sh` - Remove plugin and data
 - `.claude-plugin/plugin.json` - Plugin manifest (references skill)
 - `.claude/skills/reflections/SKILL.md` - Skill implementation with tool usage
 - `.claude/skills/reflections/install.md` - Installation reference documentation
@@ -240,8 +232,8 @@ To change, modify `EMBEDDING_MODEL` and `EMBEDDING_DIM` in `search.py`.
 
 ## Critical Rules
 
-1. **No content duplication**: Qdrant stores pointers, not full messages
+1. **No content duplication**: sqlite-vec stores pointers, not full messages
 2. **Skill reads original files**: Skills use Read tool to access JSONL at referenced line numbers
 3. **Incremental indexing**: Track byte offsets, only index new content
-4. **Per-project isolation**: Each project has its own collection and state
+4. **Per-project isolation**: Each project has its own database and state
 5. **Auto-indexing on search**: CLI search command automatically runs incremental indexing before searching

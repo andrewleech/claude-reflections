@@ -79,6 +79,10 @@ class StateManager:
         """Get the state file path for a project."""
         return self._project_dir(project) / "state.json"
 
+    def get_db_path(self, project: str) -> Path:
+        """Get the vector database path for a project."""
+        return self._project_dir(project) / "vectors.db"
+
     def load(self, project: str) -> ProjectState:
         """Load state for a project, creating default if not exists."""
         state_file = self._state_file(project)

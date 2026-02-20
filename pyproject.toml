@@ -5,7 +5,7 @@ description = "Minimal conversation memory with vector search"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "qdrant-client~=1.16.0",
+    "sqlite-vec>=0.1.6",
     "fastembed>=0.2.0",
 ]
 
@@ -46,6 +46,5 @@ mypy_path = "src"
 asyncio_mode = "auto"
 testpaths = ["tests"]
 markers = [
-    "integration: tests requiring Qdrant (deselect with '-m \"not integration\"')",
     "e2e: end-to-end tests (deselect with '-m \"not e2e\"')",
 ]

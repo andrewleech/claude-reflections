@@ -146,6 +146,18 @@ class TestStateManager:
         projects = manager.list_projects()
         assert sorted(projects) == ["project-a", "project-b"]
 
+    def test_get_db_path(self, state_dir: Path) -> None:
+        """Should return vector database path for a project."""
+        manager = StateManager(state_dir)
+        db_path = manager.get_db_path("my-project")
+        assert db_path == state_dir / "my-project" / "vectors.db"
+
+    def test_get_db_path_sanitizes_name(self, state_dir: Path) -> None:
+        """Should sanitize project name in DB path."""
+        manager = StateManager(state_dir)
+        db_path = manager.get_db_path("-home-user-project")
+        assert db_path == state_dir / "home-user-project" / "vectors.db"
+
     def test_get_stats(self, state_dir: Path) -> None:
         """Should get project statistics."""
         manager = StateManager(state_dir)

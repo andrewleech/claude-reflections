@@ -1,7 +1,7 @@
 """End-to-end integration tests.
 
-These tests require Qdrant to be running and test the full flow:
-indexing -> search -> retrieval.
+These tests exercise the full flow: indexing -> search -> retrieval.
+No external services required (sqlite-vec is embedded).
 
 Run with: pytest tests/test_e2e.py -v -m e2e
 Skip with: pytest -v -m "not e2e"
@@ -14,33 +14,11 @@ from pathlib import Path
 
 import pytest
 
-from claude_reflections.config import get_qdrant_url
 from claude_reflections.indexer import IndexableMessage, iter_new_messages
-from claude_reflections.search import QdrantManager
+from claude_reflections.search import SqliteVecManager
 from claude_reflections.state import StateManager
 
-
-def qdrant_available() -> bool:
-    """Check if Qdrant is reachable."""
-    try:
-        import urllib.request
-
-        url = get_qdrant_url()
-        urllib.request.urlopen(f"{url}/healthz", timeout=2)
-        return True
-    except Exception:
-        return False
-
-
 pytestmark = pytest.mark.e2e
-
-
-@pytest.fixture
-def test_collection_name() -> str:
-    """Unique collection name for test isolation."""
-    import uuid
-
-    return f"test_e2e_{uuid.uuid4().hex[:8]}"
 
 
 @pytest.fixture
@@ -112,30 +90,30 @@ def temp_project(tmp_path: Path, sample_conversation: str) -> tuple[Path, Path]:
     return projects_dir, state_dir
 
 
-@pytest.mark.skipif(not qdrant_available(), reason="Qdrant not available")
 class TestEndToEndFlow:
     """End-to-end tests for the full indexing and search flow."""
 
     def test_index_and_search_flow(
         self,
-        test_collection_name: str,
         temp_project: tuple[Path, Path],
+        tmp_path: Path,
     ) -> None:
         """Full flow: parse JSONL -> index -> search -> verify results."""
         projects_dir, state_dir = temp_project
         jsonl_file = projects_dir / "session.jsonl"
+        db_path = tmp_path / "project" / "vectors.db"
 
         # Step 1: Parse JSONL
         messages = list(iter_new_messages(jsonl_file, start_offset=0))
         assert len(messages) == 4  # 2 user + 2 assistant
 
-        # Step 2: Index into Qdrant
-        qdrant = QdrantManager(test_collection_name)
-        indexed_count = qdrant.index_messages(messages)
+        # Step 2: Index into sqlite-vec
+        manager = SqliteVecManager(db_path)
+        indexed_count = manager.index_messages(messages)
         assert indexed_count == 4
 
         # Step 3: Search for nginx content
-        results = qdrant.search("nginx reverse proxy configuration", limit=5)
+        results = manager.search("nginx reverse proxy configuration", limit=5)
         assert len(results) > 0
 
         # Should find the nginx-related messages
@@ -143,31 +121,31 @@ class TestEndToEndFlow:
         assert any("nginx" in s for s in snippets)
 
         # Step 4: Search for SSL content
-        ssl_results = qdrant.search("SSL certificate setup", limit=5)
+        ssl_results = manager.search("SSL certificate setup", limit=5)
         assert len(ssl_results) > 0
         assert any("ssl" in r.snippet.lower() for r in ssl_results)
 
         # Step 5: Verify collection stats
-        stats = qdrant.get_collection_stats()
+        stats = manager.get_collection_stats()
         assert stats["points_count"] == 4
-        assert stats["status"] == "green"
+        assert stats["status"] == "ok"
 
-        # Cleanup
-        qdrant.client.delete_collection(test_collection_name)
+        manager.close()
 
     def test_incremental_indexing(
         self,
-        test_collection_name: str,
         temp_project: tuple[Path, Path],
+        tmp_path: Path,
     ) -> None:
         """Test that incremental indexing works via byte offsets."""
         projects_dir, state_dir = temp_project
         jsonl_file = projects_dir / "session.jsonl"
+        db_path = tmp_path / "project" / "vectors.db"
 
         # First indexing pass
         messages1 = list(iter_new_messages(jsonl_file, start_offset=0))
-        qdrant = QdrantManager(test_collection_name)
-        count1 = qdrant.index_messages(messages1)
+        manager = SqliteVecManager(db_path)
+        count1 = manager.index_messages(messages1)
         assert count1 == 4
 
         # Simulate getting final offset
@@ -190,20 +168,19 @@ class TestEndToEndFlow:
         messages2 = list(iter_new_messages(jsonl_file, start_offset=final_offset))
         assert len(messages2) == 1  # Only the new message
 
-        count2 = qdrant.index_messages(messages2)
+        count2 = manager.index_messages(messages2)
         assert count2 == 1
 
         # Verify total
-        stats = qdrant.get_collection_stats()
+        stats = manager.get_collection_stats()
         assert stats["points_count"] == 5
 
-        # Cleanup
-        qdrant.client.delete_collection(test_collection_name)
+        manager.close()
 
     def test_state_manager_integration(
         self,
-        test_collection_name: str,
         temp_project: tuple[Path, Path],
+        tmp_path: Path,
     ) -> None:
         """Test StateManager tracks indexing progress correctly."""
         projects_dir, state_dir = temp_project
@@ -218,8 +195,9 @@ class TestEndToEndFlow:
 
         # Index and update state
         messages = list(iter_new_messages(jsonl_file, start_offset=0))
-        qdrant = QdrantManager(test_collection_name)
-        qdrant.index_messages(messages)
+        db_path = state_mgr.get_db_path(project_name)
+        manager = SqliteVecManager(db_path)
+        manager.index_messages(messages)
 
         with open(jsonl_file, "rb") as f:
             f.seek(0, 2)
@@ -240,11 +218,12 @@ class TestEndToEndFlow:
         assert stats["total_indexed"] == 4
         assert stats["files_tracked"] == 1
 
-        # Cleanup
-        qdrant.client.delete_collection(test_collection_name)
+        manager.close()
 
-    def test_search_relevance(self, test_collection_name: str) -> None:
+    def test_search_relevance(self, tmp_path: Path) -> None:
         """Test that search returns relevant results ranked by similarity."""
+        db_path = tmp_path / "project" / "vectors.db"
+
         # Create messages with distinct topics
         messages = [
             IndexableMessage(
@@ -279,11 +258,11 @@ class TestEndToEndFlow:
             ),
         ]
 
-        qdrant = QdrantManager(test_collection_name)
-        qdrant.index_messages(messages)
+        manager = SqliteVecManager(db_path)
+        manager.index_messages(messages)
 
         # Search for Python-related content
-        results = qdrant.search("Python pip install packages", limit=3)
+        results = manager.search("Python pip install packages", limit=3)
 
         # First result should be about pip
         assert "pip" in results[0].snippet.lower() or "python" in results[0].snippet.lower()
@@ -295,24 +274,4 @@ class TestEndToEndFlow:
         if docker_scores and python_scores:
             assert max(python_scores) > max(docker_scores)
 
-        # Cleanup
-        qdrant.client.delete_collection(test_collection_name)
-
-
-@pytest.mark.skipif(not qdrant_available(), reason="Qdrant not available")
-class TestConfigIntegration:
-    """Test config module integration with Qdrant."""
-
-    def test_qdrant_manager_uses_config(self, tmp_path: Path) -> None:
-        """Verify QdrantManager reads URL from config."""
-
-        # Get current working config
-        current_url = get_qdrant_url()
-
-        # Create a new QdrantManager - should use config
-        qdrant = QdrantManager("test_config_integration")
-        assert qdrant.qdrant_url == current_url
-
-        # Verify we can connect
-        collections = qdrant.client.get_collections()
-        assert collections is not None
+        manager.close()

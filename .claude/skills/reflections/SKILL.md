@@ -18,7 +18,13 @@ Search past conversations to answer: $ARGUMENTS
 
 ## Workflow
 
-1. **Search conversations:**
+1. **Check installation:**
+   ```bash
+   ls ~/.claude/plugins/local-marketplace/plugins/claude-reflections/pyproject.toml
+   ```
+   If file not found, tell the user: "The reflections system is not installed. Run `./install.sh` in the plugin directory at `~/.claude/plugins/local-marketplace/plugins/claude-reflections/`."
+
+2. **Search conversations:**
    ```bash
    cd ~/.claude/plugins/local-marketplace/plugins/claude-reflections
    uv run claude-reflections search "SEARCH_TERMS" --project="PROJECT_NAME" --limit 5
@@ -26,12 +32,11 @@ Search past conversations to answer: $ARGUMENTS
    - Extract search terms from the user's question
    - Derive project name from the working directory
    - Search auto-indexes the project incrementally before searching
-   - **On failure**: if the command exits non-zero with a "Could not connect to Qdrant" error, tell the user: "The reflections system appears to be down. Run `./install.sh` in `~/.claude/plugins/local-marketplace/plugins/claude-reflections` or see [install.md](install.md) for troubleshooting."
 
-2. **Read matched conversations:**
+3. **Read matched conversations:**
    For each search result, use Read to examine the JSONL file at the returned line number (±10 lines for context).
 
-3. **Synthesize answer:**
+4. **Synthesize answer:**
    Extract relevant information and provide a clear answer. Cite conversation dates if helpful.
 
 ## CLI Reference
@@ -83,9 +88,10 @@ Conversation files at `~/.claude/projects/<project>/*.jsonl` contain one JSON ob
 
 | Issue | Solution |
 |-------|----------|
-| Qdrant not running | `docker start claude-reflections-qdrant` or run install.sh |
+| Plugin not installed | Run `./install.sh` in the plugin directory |
 | No search results | Check project is indexed: `uv run claude-reflections list` |
 | Wrong project name | Verify with `pwd \| sed 's\|^/\|-\|' \| tr '/' '-'` |
+| Database error | Delete `~/.claude/reflections/<project>/vectors.db` and reindex |
 | CLI errors | See [install.md](install.md) for full troubleshooting |
 
 For installation or configuration issues, direct the user to [install.md](install.md).

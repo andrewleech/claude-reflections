@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import pytest
+from pathlib import Path
 
 from claude_reflections.indexer import IndexableMessage
-from claude_reflections.search import EmbeddingManager, SearchResult
+from claude_reflections.search import EmbeddingManager, SearchResult, SqliteVecManager
 
 
 class TestEmbeddingManager:
@@ -100,47 +100,146 @@ class TestIndexableMessage:
         assert msg.content == "Test content"
 
 
-@pytest.mark.integration
-class TestQdrantManager:
-    """Integration tests for QdrantManager (requires Qdrant running)."""
+class TestSqliteVecManager:
+    """Tests for SqliteVecManager."""
 
-    @pytest.fixture
-    def qdrant_manager(self):
-        """Create a test Qdrant manager."""
-        from claude_reflections.search import QdrantManager
+    def test_ensure_collection(self, tmp_path: Path) -> None:
+        """Should create table if not exists."""
+        manager = SqliteVecManager(tmp_path / "vectors.db")
+        manager.ensure_collection()
+        stats = manager.get_collection_stats()
+        assert stats["status"] == "ok"
+        assert stats["points_count"] == 0
+        manager.close()
 
-        return QdrantManager("test_reflections_integration")
-
-    def test_ensure_collection(self, qdrant_manager) -> None:
-        """Should create collection if not exists."""
-        try:
-            qdrant_manager.ensure_collection()
-            stats = qdrant_manager.get_collection_stats()
-            assert stats["status"] != "not_found"
-        except Exception as e:
-            pytest.skip(f"Qdrant not available: {e}")
-
-    def test_index_and_search(self, qdrant_manager) -> None:
+    def test_index_and_search(self, tmp_path: Path) -> None:
         """Should index messages and search them."""
-        try:
-            messages = [
-                IndexableMessage(
-                    uuid="test-001",
-                    role="user",
-                    content="How do I configure Docker containers?",
-                    timestamp="2025-01-15T10:00:00Z",
-                    session_id="session-test",
-                    file_path="/test/file.jsonl",
-                    line_number=1,
-                    byte_offset=0,
-                ),
-            ]
+        manager = SqliteVecManager(tmp_path / "vectors.db")
 
-            count = qdrant_manager.index_messages(messages)
-            assert count == 1
+        messages = [
+            IndexableMessage(
+                uuid="test-001",
+                role="user",
+                content="How do I configure Docker containers?",
+                timestamp="2025-01-15T10:00:00Z",
+                session_id="session-test",
+                file_path="/test/file.jsonl",
+                line_number=1,
+                byte_offset=0,
+            ),
+        ]
 
-            results = qdrant_manager.search("Docker configuration")
-            assert len(results) > 0
-            assert results[0].uuid == "test-001"
-        except Exception as e:
-            pytest.skip(f"Qdrant not available: {e}")
+        count = manager.index_messages(messages)
+        assert count == 1
+
+        results = manager.search("Docker configuration")
+        assert len(results) > 0
+        assert results[0].uuid == "test-001"
+        manager.close()
+
+    def test_get_collection_stats(self, tmp_path: Path) -> None:
+        """Should return correct stats."""
+        manager = SqliteVecManager(tmp_path / "vectors.db")
+
+        # No table yet
+        stats = manager.get_collection_stats()
+        assert stats["status"] == "not_found"
+        assert stats["points_count"] == 0
+
+        # Create and index
+        messages = [
+            IndexableMessage(
+                uuid=f"test-{i:03d}",
+                role="user",
+                content=f"Test message number {i}",
+                timestamp="2025-01-15T10:00:00Z",
+                session_id="session-test",
+                file_path="/test/file.jsonl",
+                line_number=i,
+                byte_offset=i * 100,
+            )
+            for i in range(3)
+        ]
+        manager.index_messages(messages)
+
+        stats = manager.get_collection_stats()
+        assert stats["status"] == "ok"
+        assert stats["points_count"] == 3
+        manager.close()
+
+    def test_drop_collection(self, tmp_path: Path) -> None:
+        """Should drop and allow recreation."""
+        manager = SqliteVecManager(tmp_path / "vectors.db")
+
+        messages = [
+            IndexableMessage(
+                uuid="test-001",
+                role="user",
+                content="Test content",
+                timestamp="2025-01-15T10:00:00Z",
+                session_id="session-test",
+                file_path="/test/file.jsonl",
+                line_number=1,
+                byte_offset=0,
+            ),
+        ]
+        manager.index_messages(messages)
+
+        stats = manager.get_collection_stats()
+        assert stats["points_count"] == 1
+
+        manager.drop_collection()
+
+        stats = manager.get_collection_stats()
+        assert stats["status"] == "not_found"
+        assert stats["points_count"] == 0
+
+        # Re-index after drop
+        manager.index_messages(messages)
+        stats = manager.get_collection_stats()
+        assert stats["points_count"] == 1
+        manager.close()
+
+    def test_search_score_threshold(self, tmp_path: Path) -> None:
+        """Should filter results below score threshold."""
+        manager = SqliteVecManager(tmp_path / "vectors.db")
+
+        messages = [
+            IndexableMessage(
+                uuid="test-001",
+                role="user",
+                content="How do I configure Docker containers?",
+                timestamp="2025-01-15T10:00:00Z",
+                session_id="session-test",
+                file_path="/test/file.jsonl",
+                line_number=1,
+                byte_offset=0,
+            ),
+        ]
+        manager.index_messages(messages)
+
+        # Very high threshold should return fewer or no results
+        results_high = manager.search("completely unrelated quantum physics", score_threshold=0.9)
+        results_low = manager.search("Docker configuration", score_threshold=0.1)
+
+        # Low threshold query about Docker should return our Docker message
+        assert len(results_low) > 0
+        # High threshold with unrelated query should return fewer results
+        assert len(results_high) <= len(results_low)
+        manager.close()
+
+    def test_empty_index(self, tmp_path: Path) -> None:
+        """Should return empty results from empty index."""
+        manager = SqliteVecManager(tmp_path / "vectors.db")
+        manager.ensure_collection()
+
+        results = manager.search("anything")
+        assert results == []
+        manager.close()
+
+    def test_index_empty_messages(self, tmp_path: Path) -> None:
+        """Should handle empty message list."""
+        manager = SqliteVecManager(tmp_path / "vectors.db")
+        count = manager.index_messages([])
+        assert count == 0
+        manager.close()

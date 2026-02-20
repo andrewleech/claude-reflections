@@ -8,9 +8,9 @@ Minimal conversation memory with vector search.
 
 ### Key Features
 
-- **No persistent services** (except Qdrant for vector storage)
+- **Zero infrastructure** - embedded sqlite-vec database, no Docker or external services
 - **Reversible indexing** - vectors point back to original JSONL files
-- **Per-project isolation** - each project has its own collection and state
+- **Per-project isolation** - each project has its own database and state
 - **Incremental indexing** - only processes new messages on each run
 - **Auto-indexing on search** - search automatically indexes before searching
 - **Skill-based integration** - automatically triggered by conversation questions
@@ -26,9 +26,9 @@ Minimal conversation memory with vector search.
                                                        |
                                                        v
                                               +----------------+
-                                              |     Qdrant     |
-                                              |  (vectors with |
-                                              |  file:line ref)|
+                                              |   sqlite-vec   |
+                                              |  (vectors.db   |
+                                              |  per project)  |
                                               +----------------+
 
 Skill workflow:
@@ -46,8 +46,6 @@ Skill workflow:
 
 - Python 3.11+
 - [uv](https://docs.astral.sh/uv/) package manager
-- Docker (for Qdrant)
-- Qdrant v1.16 (pinned in install.sh)
 
 ### Automated Install (Recommended)
 
@@ -57,12 +55,13 @@ cd /path/to/claude-reflections
 ```
 
 This will:
-- Start Qdrant v1.16 in Docker on a random available port
-- Install Python dependencies (qdrant-client ~=1.16.0)
+- Install Python dependencies (sqlite-vec, fastembed)
 - Download the embedding model
 - Create local marketplace at `~/.claude/plugins/local-marketplace`
 - Symlink plugin into marketplace
 - Update `~/.claude/settings.json` with plugin configuration
+
+Vector databases are created automatically per-project on first use.
 
 **After installation:**
 1. Restart Claude Code
@@ -75,21 +74,13 @@ This will:
 
 If you prefer manual setup:
 
-1. **Start Qdrant:**
-   ```bash
-   docker run -d --name claude-reflections-qdrant \
-     -p 6333:6333 \
-     -v ~/.claude/reflections/qdrant_storage:/qdrant/storage \
-     qdrant/qdrant:v1.16
-   ```
-
-2. **Install Python dependencies:**
+1. **Install Python dependencies:**
    ```bash
    cd /path/to/claude-reflections
    uv sync
    ```
 
-3. **Create local marketplace:**
+2. **Create local marketplace:**
    ```bash
    mkdir -p ~/.claude/plugins/local-marketplace/.claude-plugin
    mkdir -p ~/.claude/plugins/local-marketplace/plugins
@@ -99,7 +90,7 @@ If you prefer manual setup:
      ~/.claude/plugins/local-marketplace/plugins/claude-reflections
    ```
 
-4. **Create marketplace manifest:**
+3. **Create marketplace manifest:**
    ```bash
    cat > ~/.claude/plugins/local-marketplace/.claude-plugin/marketplace.json << 'EOF'
    {
@@ -118,7 +109,7 @@ If you prefer manual setup:
    EOF
    ```
 
-5. **Update Claude Code settings** (`~/.claude/settings.json`):
+4. **Update Claude Code settings** (`~/.claude/settings.json`):
    ```json
    {
      "enabledPlugins": {
@@ -135,7 +126,7 @@ If you prefer manual setup:
    }
    ```
 
-6. **Restart Claude Code** for changes to take effect
+5. **Restart Claude Code** for changes to take effect
 
 ### Development Setup
 
@@ -158,7 +149,7 @@ Once installed, the **reflections** skill is automatically available in Claude C
 
 **Example questions:**
 - "How did we fix the authentication bug?"
-- "What approach did we take for Docker configuration?"
+- "What approach did we take for the API design?"
 - "What have we discussed about X?"
 
 The skill automatically:
@@ -184,7 +175,7 @@ claude-reflections index --project my-project
 claude-reflections index --project my-project --full
 
 # Search
-claude-reflections search "Docker configuration" --project my-project
+claude-reflections search "API design" --project my-project
 
 # Check status
 claude-reflections status
@@ -194,14 +185,15 @@ claude-reflections status
 
 ### Environment Variables
 
-- `QDRANT_URL` - Qdrant server URL (default: `http://localhost:6333`)
 - `REFLECTIONS_STATE_DIR` - State directory (default: `~/.claude/reflections`)
 
 ### Per-Project State
 
-Each project's state is stored in:
+Each project's state and vector database are stored in:
 ```
-~/.claude/reflections/<project>/state.json
+~/.claude/reflections/<project>/
+├── state.json      # Indexing progress tracking
+└── vectors.db      # sqlite-vec database
 ```
 
 ## Development
@@ -226,8 +218,8 @@ uv run mypy src/claude_reflections
 1. **Indexing**: Parses JSONL files from `~/.claude/projects/<project>/*.jsonl`
 2. **Content Extraction**: Extracts user prompts and assistant text responses (skips thinking blocks and tool use)
 3. **Embedding**: Generates 384-dimensional embeddings using FastEmbed (all-MiniLM-L6-v2)
-4. **Storage**: Stores vectors in Qdrant with payloads containing file path and line number
-5. **Search**: CLI auto-indexes (incremental), then performs vector similarity search
+4. **Storage**: Stores vectors in sqlite-vec with metadata (file path, line number, role, snippet, timestamp)
+5. **Search**: CLI auto-indexes (incremental), then performs cosine similarity search
 6. **Skill**: Reads original JSONL files at returned line numbers to provide detailed answers
 
 ## License

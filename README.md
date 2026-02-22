@@ -17,28 +17,20 @@ Minimal conversation memory with vector search.
 
 ## Architecture
 
+```mermaid
+flowchart LR
+    A["Claude Code<br/>(user asks question)"] --> B["Skill<br/>(reflections)"]
+    B --> C["CLI Commands<br/>(index + search)"]
+    C --> D["sqlite-vec<br/>(vectors.db per project)"]
 ```
-+----------------+     +----------------+     +----------------+
-|  Claude Code   | --> |     Skill      | --> |  CLI Commands  |
-|  (user asks    |     |  (reflections) |     |  (index +      |
-|   question)    |     |                |     |   search)      |
-+----------------+     +----------------+     +--------+-------+
-                                                       |
-                                                       v
-                                              +----------------+
-                                              |   sqlite-vec   |
-                                              |  (vectors.db   |
-                                              |  per project)  |
-                                              +----------------+
 
-Skill workflow:
+**Skill workflow:**
 1. User asks: "How did we fix X?"
-2. Skill determines project name from $PWD
-3. Skill runs: uv run claude-reflections search "X"
+2. Skill determines project name from `$PWD`
+3. Skill runs: `uv run claude-reflections search "X"`
 4. CLI auto-indexes (incremental), then searches
 5. Skill reads JSONL files at returned line numbers
 6. Skill synthesizes answer from actual conversation content
-```
 
 ## Installation
 

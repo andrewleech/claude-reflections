@@ -16,28 +16,20 @@ Minimal conversation memory system for Claude Code:
 
 ## Architecture
 
+```mermaid
+flowchart LR
+    A["Claude Code<br/>(user asks question)"] --> B["Skill<br/>(reflections)"]
+    B --> C["CLI Commands<br/>(index + search)"]
+    C --> D["sqlite-vec<br/>(vectors.db per project)"]
 ```
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│  Claude Code    │────▶│   Skill         │────▶│  CLI Commands   │
-│  (user asks     │     │  (reflections)  │     │  (index +       │
-│   question)     │     │                 │     │   search)       │
-└─────────────────┘     └─────────────────┘     └────────┬────────┘
-                                                          │
-                                                          ▼
-                                                 ┌─────────────────┐
-                                                 │   sqlite-vec    │
-                                                 │  (vectors.db    │
-                                                 │  per project)   │
-                                                 └─────────────────┘
 
-Workflow:
+**Workflow:**
 1. User asks: "How did we fix X?"
-2. Skill determines project from $PWD
-3. Skill runs CLI: uv run claude-reflections search "X"
+2. Skill determines project from `$PWD`
+3. Skill runs CLI: `uv run claude-reflections search "X"`
 4. CLI auto-indexes (incremental), then searches
 5. Skill reads JSONL files at returned line numbers
 6. Skill provides answer from actual conversation content
-```
 
 ## Quick Start
 
